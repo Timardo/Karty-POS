@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="Free OS (38d155ad-03a9-433f-991f-848f0b812bb7)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/tmp/tmp.o5IP2rMKQ3" local="$PROJECT_DIR$" />
+          </mappings>
+          <excludedPaths>
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-karty-server" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-karty-client" />
+          </excludedPaths>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>
