@@ -4,9 +4,57 @@
 #include <boost/container/list.hpp>
 #include <map>
 #include <string>
+#include <boost/asio.hpp>
+
+#define MAX_PLAYERS 5
+#define PACKET_DELIMITER ":"
+#define END_OF_TRANSMISSION "\n"
+
+using namespace boost::asio;
+using ip::tcp;
+using std::string;
+using std::endl;
+
+string readFromSocket(tcp::socket& socket) {
+    boost::asio::streambuf buf;
+    boost::asio::read_until(socket, buf, END_OF_TRANSMISSION);
+    string data = boost::asio::buffer_cast<const char*>(buf.data());
+    return data;
+}
+
+void sendToSocket(tcp::socket& socket, const string& message) {
+    string msg = message + END_OF_TRANSMISSION;
+    boost::system::error_code error;
+    boost::asio::write(socket, boost::asio::buffer(msg), error);
+}
 
 enum Action {
-    // ...
+    StartGame,
+    OtherPlayerAction,
+    PlayerAction,
+    DataNumberOfPlayers,
+    Data
+};
+
+struct Packet {
+    Action action;
+    string data;
+
+    Packet(Action actionIn, string dataIn) {
+        action = actionIn;
+        data = dataIn;
+    }
+
+    Packet(string stringPacket) {
+        int delimiterIndex = stringPacket.find(PACKET_DELIMITER);
+        std::string actionString = stringPacket.substr(0, delimiterIndex);
+        action = (Action)atoi(actionString.c_str());
+        data = stringPacket.substr(delimiterIndex + 1);
+    }
+
+    string toString() {
+        return std::to_string((int)action) + PACKET_DELIMITER + data;
+    }
 };
 
 enum Color {// 🂠 - blank card
@@ -16,7 +64,7 @@ enum Color {// 🂠 - blank card
     DIAMOND // ♦ - red
 };
 
-const std::map<Color, std::string> COLOR_STRING_VALUES = {
+const std::map<Color, string> COLOR_STRING_VALUES = {
         { SPADE,   "♠"},
         { CLUB,    "♣"},
         { HEART,   "♥"},
@@ -34,7 +82,7 @@ enum Value {
     ACE    // A
 };
 
-const std::map<Value, std::string> VALUE_STRING_VALUES = {
+const std::map<Value, string> VALUE_STRING_VALUES = {
         { SEVEN, "7"},
         { EIGHT, "8"},
         { NINE,  "9"},
@@ -75,12 +123,10 @@ public:
 class Player {
 public:
     int maxCards;
-    int cardAmount;
     boost::container::list<Card> cards;
 
     Player() {
-        maxCards = 0;
-        cardAmount = 0;
+        maxCards = 5;
     }
 };
 

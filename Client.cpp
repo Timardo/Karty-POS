@@ -25,11 +25,9 @@ int main() {
     clientData.lastCard = Card(CLUB, SEVEN);
     clientData.deckCards = 24;
     Player otherPlayer = Player();
-    otherPlayer.cardAmount = 14;
     otherPlayer.cards.push_back(Card(CLUB, KING));
     clientData.otherPlayers.push_back(otherPlayer);
     clientData.clientPlayer = Player();
-    clientData.clientPlayer.cardAmount = 10;
     clientData.clientPlayer.cards.push_back(Card(CLUB, NINE));
 
     io_service io_service;
@@ -52,8 +50,9 @@ int main() {
 
         if (error && error != boost::asio::error::eof) {
             cout << "receive failed: " << error.message() << endl;
+            return 1;
         } else {
-            const char* data = boost::asio::buffer_cast<const char*>(receive_buffer.data());
+            string data = boost::asio::buffer_cast<const char*>(receive_buffer.data());
             cout << data << endl;
         }
     }
