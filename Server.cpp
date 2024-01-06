@@ -72,7 +72,7 @@ public:
     }
 
     int getNumberOfRemainingCards() {
-        return remainingCards.size();
+        return (int)remainingCards.size();
     }
 
     Card getLastUsedCard() {
@@ -84,83 +84,153 @@ struct GameData;
 struct ClientConnection {
     tcp::socket* clientSocket;
     int clientId;
+    int maxCards;
     GameData* gameData;
-    std::queue<Packet> packetsToSend;
-
-    ~ClientConnection() {
-        delete clientSocket;
-    }
+    std::queue<Packet> outboundPackets;
+    pthread_cond_t conditionVariableOutboundPackets;
 };
 
-
 struct GameData {
-    std::map<Player, ClientConnection> playerData;
+    std::vector<Player> playerData;
+    std::vector<ClientConnection*> clientConnections;
     Deck deckData;
     bool gameStarted = false;
     int activePlayerId = 0;
     pthread_mutex_t mutex;
-    pthread_cond_t conditionVariableGameStarted;
+    pthread_cond_t conditionVariableInboundPackets;
+    std::queue<Packet> inboundPackets;
 
     void setGameStarted() {
         gameStarted = true;
-        pthread_cond_signal(&conditionVariableGameStarted);
     }
 
-    void processAction(int playerId, Action action) {
+    void processPacket(Packet& packet) {
+        cout << "Player with id " << packet.playerId << " sent a packet with action id " << packet.action << " and data " << packet.data << endl;
+
+        switch (packet.action) {
+            case StartGame:
+                // do stuff...
+                break;
+        }
+    }
+
+    void createNewPlayer() {
+
+    }
+
+    void sendDataToAllPlayers() {
 
     }
 };
 
+void* startInboundPacketHandler(void* args) {
+    auto gameData = ((GameData*)args);
+
+    try {
+        while (true) {
+            pthread_mutex_lock(&gameData->mutex);
+
+            while (gameData->inboundPackets.empty()) {
+                pthread_cond_wait(&gameData->conditionVariableInboundPackets, &gameData->mutex);
+            }
+
+            Packet packetToProcess = gameData->inboundPackets.front();
+            gameData->inboundPackets.pop();
+
+            pthread_cond_signal(&gameData->conditionVariableInboundPackets);
+            pthread_mutex_unlock(&gameData->mutex);
+
+            gameData->processPacket(packetToProcess);
+        }
+    } catch (boost::system::system_error &error) {
+        cout << "Server cannot process inbound packet: " << error.what() << endl;
+        return nullptr;
+    }
+}
+
+void* startInboundThread(void* args) {
+    auto clientConnection = ((ClientConnection*)args);
+
+    try {
+        while (true) {
+            string messageReceived = readFromSocket(*clientConnection->clientSocket);
+            Packet packetReceived = Packet(messageReceived);
+            packetReceived.playerId = clientConnection->clientId;
+
+            pthread_mutex_lock(&clientConnection->gameData->mutex);
+
+            clientConnection->gameData->inboundPackets.push(packetReceived);
+
+            pthread_cond_signal(&clientConnection->gameData->conditionVariableInboundPackets);
+            pthread_mutex_unlock(&clientConnection->gameData->mutex);
+        }
+    } catch (boost::system::system_error &error) {
+        cout << "Client " << clientConnection->clientId << " was unable to read from socket: " << error.what() << endl;
+        return nullptr;
+    }
+}
+
+void* startOutboundThread(void* args) {
+    auto clientConnection = ((ClientConnection*)args);
+
+    try {
+        while (true) {
+            pthread_mutex_lock(&clientConnection->gameData->mutex);
+
+            while (clientConnection->outboundPackets.empty()) {
+                pthread_cond_wait(&clientConnection->conditionVariableOutboundPackets, &clientConnection->gameData->mutex);
+            }
+
+            Packet packetToSend = clientConnection->outboundPackets.front();
+            clientConnection->outboundPackets.pop();
+
+            pthread_cond_signal(&clientConnection->conditionVariableOutboundPackets);
+            pthread_mutex_unlock(&clientConnection->gameData->mutex);
+
+            writeToSocket(*clientConnection->clientSocket, packetToSend.toString());
+        }
+    } catch (boost::system::system_error &error) {
+        cout << "Client " << clientConnection->clientId << " was unable to write to socket: " << error.what() << endl;
+        return nullptr;
+    }
+}
+
 void* startConnection(void* args) {
-    auto clientConnection = *((ClientConnection*)args);
+    auto clientConnection = ((ClientConnection*)args);
+    pthread_t inboundThread;
+    pthread_t outboundThread;
+    pthread_cond_init(&clientConnection->conditionVariableOutboundPackets, nullptr);
 
-    if (clientConnection.clientId == 0) {
-        string message = readFromSocket(*clientConnection.clientSocket);
-        Packet parsedPacket = Packet(message);
+    pthread_create(&inboundThread, nullptr, startInboundThread, clientConnection);
+    pthread_create(&outboundThread, nullptr, startOutboundThread, clientConnection);
 
-        if (parsedPacket.action == StartGame) {
-            clientConnection.gameData->setGameStarted();
-        } else {
-            // what the client doing
-            return nullptr;
-        }
-    }
+    pthread_join(inboundThread, nullptr);
+    pthread_join(outboundThread, nullptr);
 
-    while (!clientConnection.gameData->gameStarted) {
-        pthread_cond_wait(&clientConnection.gameData->conditionVariableGameStarted, &clientConnection.gameData->mutex);
-    }
-
-    while (true) {
-        if (clientConnection.clientId == clientConnection.gameData->activePlayerId) {
-            string message = readFromSocket(*clientConnection.clientSocket);
-        }
-
-        pthread_mutex_lock(&clientConnection.gameData->mutex);
-
-        while (clientConnection.packetsToSend.empty()) {
-            pthread_cond_wait(&clientConnection.gameData->conditionVariableGameStarted, &clientConnection.gameData->mutex);
-        }
-
-        Packet packetToSend = clientConnection.packetsToSend.front();
-        clientConnection.packetsToSend.pop();
-        pthread_mutex_lock(&clientConnection.gameData->mutex);
-
-        sendToSocket(*clientConnection.clientSocket, packetToSend.toString());
-        usleep(10000);
-    }
+    pthread_cond_destroy(&clientConnection->conditionVariableOutboundPackets);
+    return nullptr;
 }
 
 int main() {
     GameData gameData = GameData();
-    int currentPlayers = 0;
+
+    pthread_mutex_init(&gameData.mutex, nullptr);
+    pthread_cond_init(&gameData.conditionVariableInboundPackets, nullptr);
+
     pthread_t clientConnectionThreads[MAX_PLAYERS];
+    pthread_t inboundPacketHandler;
+    pthread_create(&inboundPacketHandler, nullptr, startInboundPacketHandler, &gameData);
+
+    int currentPlayers = 0;
     boost::asio::io_service io_service;
     //listen for new connection
     tcp::acceptor acceptor_(io_service, tcp::endpoint(tcp::v4(), 10234));
     //waiting for connection
     while (currentPlayers < MAX_PLAYERS && !gameData.gameStarted) {
-        tcp::socket* socket = new tcp::socket(io_service);
+        tcp::socket* socket = new tcp::socket(io_service); // TODO: I FUCKING LOVE POINTERS, DELETE SOMEHOW ATER BECAUSE MEMORY LEAKS BAD, GARBAGE COLLECTOR BAD AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA FUCK YOU C++
         acceptor_.accept(*socket);
+
+        cout << "A client with id " << currentPlayers <<  " connected to the server!" << endl;
 
         if (gameData.gameStarted) {
             socket->close();
@@ -170,6 +240,7 @@ int main() {
         ClientConnection clientConnection {
                 socket,
                 currentPlayers,
+                5,
                 &gameData
         };
 
@@ -180,4 +251,7 @@ int main() {
     for (int i = 0; i < currentPlayers; i++) {
         pthread_join(clientConnectionThreads[i], nullptr);
     }
+
+    pthread_cond_destroy(&gameData.conditionVariableInboundPackets);
+    pthread_mutex_destroy(&gameData.mutex);
 }

@@ -40,7 +40,6 @@ if(NOT Boost_FOUND)
 
         add_executable(SEMESTRALKA_SERVER Server.cpp
                 shared.h
-                Server.cpp
         )
 
         target_link_libraries(SEMESTRALKA_SERVER ${Boost_LIBRARIES} pthread)

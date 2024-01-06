@@ -35,26 +35,13 @@ int main() {
     socket.connect(tcp::endpoint(ip::address::from_string("[NOT_AVAILABLE]"), 10234)); //connection
 
     boost::system::error_code error;
-    while (true) {
-        boost::asio::write(socket, boost::asio::buffer(std::to_string(clientData.deckCards) + "\n"), error);
+    Packet startGamePacket = Packet(StartGame);
+    cout << "press any key to start game, press k to not start" << endl;
+    char c = getch();
 
-        if (!error) {
-            cout << "Client sent message with cards!" << endl;
-        } else {
-            cout << "send failed: " << error.message() << endl;
-        }
-
-        // getting response from server
-        boost::asio::streambuf receive_buffer;
-        boost::asio::read_until(socket, receive_buffer, "\n", error);
-
-        if (error && error != boost::asio::error::eof) {
-            cout << "receive failed: " << error.message() << endl;
-            return 1;
-        } else {
-            string data = boost::asio::buffer_cast<const char*>(receive_buffer.data());
-            cout << data << endl;
-        }
+    while (c != 'k') {
+        writeToSocket(socket, startGamePacket.toString());
+        c = getch();
     }
 
     return 0;

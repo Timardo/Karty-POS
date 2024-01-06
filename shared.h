@@ -22,7 +22,7 @@ string readFromSocket(tcp::socket& socket) {
     return data;
 }
 
-void sendToSocket(tcp::socket& socket, const string& message) {
+void writeToSocket(tcp::socket& socket, const string& message) {
     string msg = message + END_OF_TRANSMISSION;
     boost::system::error_code error;
     boost::asio::write(socket, boost::asio::buffer(msg), error);
@@ -39,8 +39,9 @@ enum Action {
 struct Packet {
     Action action;
     string data;
+    int playerId;
 
-    Packet(Action actionIn, string dataIn) {
+    Packet(Action actionIn, string dataIn = "-") {
         action = actionIn;
         data = dataIn;
     }
