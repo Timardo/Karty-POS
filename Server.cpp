@@ -237,14 +237,14 @@ int main() {
             break;
         }
 
-        ClientConnection clientConnection {
+        ClientConnection* clientConnection  = new ClientConnection { // TODO: fix memory leak
                 socket,
                 currentPlayers,
                 5,
                 &gameData
         };
 
-        pthread_create(&clientConnectionThreads[currentPlayers], nullptr, startConnection, &clientConnection);
+        pthread_create(&clientConnectionThreads[currentPlayers], nullptr, startConnection, clientConnection);
         currentPlayers++;
     }
 
