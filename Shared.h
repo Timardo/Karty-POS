@@ -7,8 +7,9 @@
 #include <boost/asio.hpp>
 
 #define MAX_PLAYERS 5
-#define PACKET_DELIMITER ":"
+#define DATA_DELIMITER ":"
 #define END_OF_TRANSMISSION "\n"
+#define GAME_DATA_DELIMITER ","
 
 using namespace boost::asio;
 using ip::tcp;
@@ -28,12 +29,13 @@ void writeToSocket(tcp::socket& socket, const string& message) {
     boost::asio::write(socket, boost::asio::buffer(msg), error);
 }
 
+// inbound/outbound from server side
 enum Action {
-    StartGame,
-    OtherPlayerAction,
-    PlayerAction,
-    DataNumberOfPlayers,
-    Data
+    InboundStartGame,
+    InboundPlayerUsedCards,
+    InboundPlayerTakesCards,
+    OutboundGameData,
+    OutboundGameStarted
 };
 
 struct Packet {
@@ -47,29 +49,29 @@ struct Packet {
     }
 
     Packet(string stringPacket) {
-        int delimiterIndex = stringPacket.find(PACKET_DELIMITER);
+        int delimiterIndex = stringPacket.find(DATA_DELIMITER);
         std::string actionString = stringPacket.substr(0, delimiterIndex);
         action = (Action)atoi(actionString.c_str());
         data = stringPacket.substr(delimiterIndex + 1);
     }
 
     string toString() {
-        return std::to_string((int)action) + PACKET_DELIMITER + data;
+        return std::to_string((int)action) + DATA_DELIMITER + data;
     }
 };
 
 enum Color {// 🂠 - blank card
-    SPADE,  // ♠ - black
-    CLUB,   // ♣ - black
+    SPADE,  // ♠ - green
+    CLUB,   // ♣ - brown
     HEART,  // ♥ - red
-    DIAMOND // ♦ - red
+    DIAMOND // ♦ - black
 };
 
 const std::map<Color, string> COLOR_STRING_VALUES = {
-        { SPADE,   "♠"},
-        { CLUB,    "♣"},
-        { HEART,   "♥"},
-        { DIAMOND, "♦"}
+        { SPADE,   "♠ Zeleň"},
+        { CLUB,    "♣ Žaluď"},
+        { HEART,   "♥ Červeň"},
+        { DIAMOND, "♦ Guľa"}
 };
 
 enum Value {
@@ -88,33 +90,32 @@ const std::map<Value, string> VALUE_STRING_VALUES = {
         { EIGHT, "8"},
         { NINE,  "9"},
         { TEN,   "10"},
-        { JACK,  "J"},
-        { QUEEN, "Q"},
-        { KING,  "K"},
-        { ACE,   "A"}
+        { JACK,  "Dolník"},
+        { QUEEN, "Horník"},
+        { KING,  "Kráľ"},
+        { ACE,   "Eso"}
 };
 
-class Card {
-public:
+struct Card {
     Color color;
     Value value;
+    bool canBeUsed = false;
+    bool isUsed = false;
 
-public:
     Card(Color colorIn, Value valueIn) {
         color = colorIn;
         value = valueIn;
     }
 
     Card() {
-        color = SPADE;
-        value = SEVEN;
+
     }
 
     /**
      * Client-side only
      * @return String representation of this card
      */
-    auto toString();
+    auto toString(int optionId);
 
     bool canBePlacedOn(Card& bottomCard) {
         return bottomCard.color == color || bottomCard.value == value || value == QUEEN;
@@ -124,21 +125,20 @@ public:
 class Player {
 public:
     int maxCards;
-    boost::container::list<Card> cards;
+    std::vector<Card> cards;
+    bool played;
 
     Player() {
         maxCards = 5;
+        played = true;
     }
-};
 
-struct ClientData {
-    boost::container::list<Player> otherPlayers;
-    Player clientPlayer;
-    int deckCards;
-    Card lastCard;
+    void setHasPlayed() {
+        played = true;
+    }
 
-    ClientData() {
-        deckCards = 0;
+    void setPlayersTurn() {
+        played = false;
     }
 };
 

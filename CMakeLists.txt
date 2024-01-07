@@ -19,7 +19,8 @@ if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 
     add_executable(SEMESTRALKA_CLIENT Client.cpp
-            shared.h
+            Shared.h
+            MemoryLeakChecker.h
     )
 
     target_link_libraries(SEMESTRALKA_CLIENT ${Boost_LIBRARIES})
@@ -39,7 +40,7 @@ if(NOT Boost_FOUND)
         include_directories(${Boost_INCLUDE_DIRS})
 
         add_executable(SEMESTRALKA_SERVER Server.cpp
-                shared.h
+                Shared.h
         )
 
         target_link_libraries(SEMESTRALKA_SERVER ${Boost_LIBRARIES} pthread)
