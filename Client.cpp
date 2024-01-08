@@ -4,7 +4,6 @@
 #include <conio.h>
 #include <thread>
 #include <queue>
-#include "MemoryLeakChecker.h"
 
 using namespace boost::asio;
 using ip::tcp;
@@ -16,7 +15,7 @@ using std::thread;
 class ClientData {
 public:
     tcp::socket* socket;
-    std::vector<int> otherPlayers;
+    std::vector<int> playersCardsCount;
     Player clientPlayer;
     int deckCardsCount = 0;
     int activePlayerId = -1;
@@ -32,7 +31,8 @@ public:
     bool threadsRunning = true;
 
     void setClientData(Packet& clientDataPacket) {
-        // deckCardsCount, lastCard.color, lastCard.value, player.countCards, [player.cards[i].color, player.cards[i].value], otherPlayers.count, [otherPlayer[i].countCards]
+        // deckCardsCount, lastCard.color, lastCard.value, client.countCards, [client.cards[i].color, client.cards[i].value], otherPlayers.count, [otherPlayers[i].countCards]
+        // deckCardsCount, activePlayerId, thisClientId, activeSevens, beingSkipped(0/1), lastCard.color, lastCard.value, client.countCards, [client.cards[i].color, client.cards[i].value], players.count, [players[i].countCards]
         string gameDataString = clientDataPacket.data;
         std::vector<int> dataSplit;
         int delimeterIndex = 0;
@@ -46,20 +46,27 @@ public:
 
         std::unique_lock<std::mutex> lock(mutex);
 
-        deckCardsCount = dataSplit[0];
-        lastCard = Card((Color)dataSplit[1], (Value)dataSplit[2]);
-        int playerCardCount = dataSplit[3];
+        int index = 0;
+        deckCardsCount = dataSplit[index++];
+        activePlayerId = dataSplit[index++];
+        clientId = dataSplit[index++];
+        activeSevens = dataSplit[index++];
+        isBeingSkipped = dataSplit[index++] == 1;
+        lastCard = Card((Color)dataSplit[index], (Value)dataSplit[index + 1]);
+        index += 2;
+
+        int playerCardCount = dataSplit[index++];
         clientPlayer.cards.clear();
 
         for (int i = 0; i < playerCardCount; i++) {
-            clientPlayer.cards.push_back(Card((Color)(dataSplit[4] + i * 2), (Value)(dataSplit[5] + i * 2)));
+            clientPlayer.cards.push_back(Card((Color)(dataSplit[index + i * 2]), (Value)(dataSplit[index + 1 + i * 2])));
         }
 
-        int otherPlayerCount = dataSplit[4 + playerCardCount * 2];
-        otherPlayers.clear();
+        int otherPlayerCount = dataSplit[index + playerCardCount * 2];
+        playersCardsCount.clear();
 
         for (int i = 0; i < otherPlayerCount; i++) {
-            otherPlayers.push_back(dataSplit[dataSplit[4 + playerCardCount * 2 + i + 1]]);
+            playersCardsCount.push_back(dataSplit[dataSplit[index + playerCardCount * 2 + i + 1]]);
         }
 
         lock.unlock();
@@ -71,6 +78,7 @@ public:
                 // start the game
                 break;
             case OutboundGameData:
+                cout << "prijimam data" << endl;
                 setClientData(packet);
                 break;
         }
@@ -79,11 +87,12 @@ public:
     void handleInput(char input) {
         // HANDLE INPUT
 
-        //Packet packetToSend = Packet(...);
+        Packet packetToSend = Packet(InboundPlayerUsedCards, std::to_string(input));
+        cout << input << endl;
 
         std::unique_lock<std::mutex> lock(mutex);
 
-        //outboundPackets.push(packetToSend);
+        outboundPackets.push(packetToSend);
         conditionVariableOutboundPackets.notify_one();
 
         lock.unlock();
@@ -171,7 +180,7 @@ void startConsoleOutputThread(ClientData& data) {
     while (data.threadsRunning) {
 
         // OUTPUT TO CONSOLE, lock mutex when reading clientData
-        cout << data.clientPlayer.cards[0].toString(1) << endl;
+        //cout << data.clientPlayer.cards[0].toString(1) << endl;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }

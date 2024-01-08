@@ -107,7 +107,7 @@ struct GameData {
     void setGameStarted() {
         gameStarted = true;
         Packet packetGameStarted = Packet(OutboundGameStarted);
-        // TODO: dorobiiiiiť
+
     }
 
     bool canBePlayed(Card& card) {
@@ -229,14 +229,11 @@ struct GameData {
             case InboundStartGame:
                 setGameStarted();
                 break;
-            case InboundPlayerUsedCard:
+            case InboundPlayerUsedCards:
                 playerUsedCard(packet);
                 break;
-            case InboundPlayerTakesCard:
+            case InboundPlayerTakesCards:
                 playerTakesCards(packet);
-                break;
-            case InboundPlayerEndsRound:
-                playerEndsTurn(packet);
                 break;
             default:
                 break;
@@ -256,31 +253,32 @@ struct GameData {
 
     void sendDataToAllPlayers() {
         for (ClientConnection* clientConnection : clientConnections) {
-            string currentPlayerData;
-            string otherPlayersData = std::to_string(playerData.size() - 1);
+            int isBeingSkipped = 0;
+            Player& thisPlayer = playerData[clientConnection->clientId];
+            string currentPlayerData = std::to_string(thisPlayer.cards.size());
 
-            for (int i = 0; i < playerData.size(); i++) {
-                Player& player = playerData[i];
+            for (Card& card : thisPlayer.cards) {
+                currentPlayerData += GAME_DATA_DELIMITER + std::to_string(card.color) + GAME_DATA_DELIMITER + std::to_string(card.color);
+            }
 
-                if (clientConnection->clientId == i) {
-                    currentPlayerData = std::to_string(player.cards.size());
+            string playersCardsCount = std::to_string(playerData.size());
 
-                    for (Card& card : player.cards) {
-                        currentPlayerData += std::to_string(card.color) + GAME_DATA_DELIMITER + std::to_string(card.color) + GAME_DATA_DELIMITER;
-                    }
-                } else {
-                    otherPlayersData += std::to_string(player.cards.size()) + ((i == player.cards.size() - 1) || (currentPlayerData.empty() && (i == player.cards.size() - 2)) ? "" : GAME_DATA_DELIMITER);
-                }
+            for (Player& player : playerData) {
+                playersCardsCount += GAME_DATA_DELIMITER + std::to_string(player.cards.size());
             }
 
             Card& lastCard = deckData.getLastUsedCard();
 
             string packetData =
                     std::to_string(deckData.getNumberOfRemainingCards()) + GAME_DATA_DELIMITER +
+                    std::to_string(activePlayerId) + GAME_DATA_DELIMITER +
+                    std::to_string(clientConnection->clientId) + GAME_DATA_DELIMITER +
+                    std::to_string(activeSevens) + GAME_DATA_DELIMITER +
+                    std::to_string(isBeingSkipped) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.color) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.value) + GAME_DATA_DELIMITER +
                     currentPlayerData + GAME_DATA_DELIMITER +
-                    otherPlayersData;
+                    playersCardsCount;
 
             Packet packetToSend = Packet(OutboundGameData, packetData);
             packetToSend.playerId = -1;
@@ -328,6 +326,8 @@ void* startInboundPacketHandler(void* args) {
         cout << "Server cannot process inbound packet: " << error.what() << endl;
         return nullptr;
     }
+
+    return nullptr;
 }
 
 void* startInboundThread(void* args) {
@@ -351,6 +351,8 @@ void* startInboundThread(void* args) {
         // TODO: handle disconnect
         return nullptr;
     }
+
+    return nullptr;
 }
 
 void* startOutboundThread(void* args) {
@@ -376,11 +378,14 @@ void* startOutboundThread(void* args) {
         cout << "Client " << clientConnection->clientId << " was unable to write to socket: " << error.what() << endl;
         return nullptr;
     }
+
+    return nullptr;
 }
 
 void* startConnection(void* args) {
     auto clientConnection = ((ClientConnection*)args);
 
+    clientConnection->gameData->clientConnections.push_back(clientConnection);
     clientConnection->gameData->createNewPlayer();
 
     pthread_t inboundThread;

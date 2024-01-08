@@ -20,7 +20,6 @@ if(Boost_FOUND)
 
     add_executable(SEMESTRALKA_CLIENT Client.cpp
             Shared.h
-            MemoryLeakChecker.h
     )
 
     target_link_libraries(SEMESTRALKA_CLIENT ${Boost_LIBRARIES})

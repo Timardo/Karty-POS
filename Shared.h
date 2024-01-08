@@ -6,7 +6,7 @@
 #include <string>
 #include <boost/asio.hpp>
 
-#define MAX_PLAYERS 5
+#define MAX_PLAYERS 50
 #define DATA_DELIMITER ":"
 #define END_OF_TRANSMISSION "\n"
 #define GAME_DATA_DELIMITER ","
@@ -32,7 +32,7 @@ void writeToSocket(tcp::socket& socket, const string& message) {
 // inbound/outbound from server side
 enum Action {
     InboundStartGame,
-    InboundPlayerUsedCards,
+    InboundPlayerUsedCards, // data: numberOfCards, [indexOfCard]
     InboundPlayerTakesCards,
     OutboundGameData,
     OutboundGameStarted
@@ -99,7 +99,7 @@ const std::map<Value, string> VALUE_STRING_VALUES = {
 struct Card {
     Color color;
     Value value;
-    bool canBeUsed = false;
+    bool canBeUsed = true;
     bool isUsed = false;
 
     Card(Color colorIn, Value valueIn) {
