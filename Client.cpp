@@ -22,6 +22,7 @@ public:
     int clientId = -1;
     int activeSevens = 0;
     bool isBeingSkipped = false;
+    bool canUseHeartSeven = false;
     Card lastCard;
     std::mutex mutex;
     std::queue<Packet> inboundPackets;
@@ -52,6 +53,7 @@ public:
         clientId = dataSplit[index++];
         activeSevens = dataSplit[index++];
         isBeingSkipped = dataSplit[index++] == 1;
+        canUseHeartSeven = dataSplit[index++] == 1;
         lastCard = Card((Color)dataSplit[index], (Value)dataSplit[index + 1]);
         index += 2;
 

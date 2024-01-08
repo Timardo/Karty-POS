@@ -254,6 +254,7 @@ struct GameData {
     void sendDataToAllPlayers() {
         for (ClientConnection* clientConnection : clientConnections) {
             int isBeingSkipped = 0;
+            int canUseHeartSeven = 0;
             Player& thisPlayer = playerData[clientConnection->clientId];
             string currentPlayerData = std::to_string(thisPlayer.cards.size());
 
@@ -275,6 +276,7 @@ struct GameData {
                     std::to_string(clientConnection->clientId) + GAME_DATA_DELIMITER +
                     std::to_string(activeSevens) + GAME_DATA_DELIMITER +
                     std::to_string(isBeingSkipped) + GAME_DATA_DELIMITER +
+                    std::to_string(canUseHeartSeven) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.color) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.value) + GAME_DATA_DELIMITER +
                     currentPlayerData + GAME_DATA_DELIMITER +
