@@ -97,8 +97,8 @@ const std::map<Value, string> VALUE_STRING_VALUES = {
 };
 
 struct Card {
-    Color color;
-    Value value;
+    Color color = SPADE;
+    Value value = SEVEN;
     bool canBeUsed = true;
     bool isUsed = false;
 
