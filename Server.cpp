@@ -258,7 +258,7 @@ struct GameData {
             string currentPlayerData = std::to_string(thisPlayer.cards.size());
 
             for (Card& card : thisPlayer.cards) {
-                currentPlayerData += GAME_DATA_DELIMITER + std::to_string(card.color) + GAME_DATA_DELIMITER + std::to_string(card.color);
+                currentPlayerData += GAME_DATA_DELIMITER + std::to_string(card.color) + GAME_DATA_DELIMITER + std::to_string(card.value);
             }
 
             string playersCardsCount = std::to_string(playerData.size());
