@@ -86,6 +86,10 @@ public:
 
     void handleInput(char input) {
         // HANDLE INPUT
+//
+//        if  (input >= 1 <= 9 || input >= 'a' <= 'z') {
+//            volammetoduktoramiteninputnejakospracuje;
+//        }
 
         Packet packetToSend = Packet(InboundPlayerUsedCards, std::to_string(input));
         cout << input << endl;
@@ -100,7 +104,7 @@ public:
 };
 
 auto Card::toString(int optionId) {
-    string output = (optionId == -1 ? "" : std::to_string(optionId) + "    ") + COLOR_STRING_VALUES.at(color) + " " + VALUE_STRING_VALUES.at(value);
+    string output = (optionId == -1 ? "" : "["+std::to_string(optionId)+"]" + "\t") + COLOR_STRING_VALUES.at(color) + " " + VALUE_STRING_VALUES.at(value);
 
     switch (color) {
         case SPADE:
@@ -177,11 +181,68 @@ void startOutboundThread(ClientData& data) {
 }
 
 void startConsoleOutputThread(ClientData& data) {
+    char maleA = 'a';
     while (data.threadsRunning) {
+        std::unique_lock<std::mutex> lock(data.mutex);
+        system("cls");
+        auto hrac = dye::green_on_black(data.clientId+1);
+        auto stojis = dye::grey_on_black("Aktivne ESO, stojis!");
+        auto cervenaSedma = dye::grey_on_black("Teraz je mozne vyolizt Cervenu 7 pre vratenie hraca do hry!");
+        auto separator = "=================================================================";
+        auto poslednaVylozenaKarta = data.lastCard.toString(-1);
+        auto sedmyNula = dye::grey_on_black(data.activeSevens);
+        auto sedmyAktivne = dye::red_on_black(data.activeSevens);
+        auto pocetAktivnychSediemNula = dye::grey_on_black("Pocet aktivnych sediem: ");
+        auto pocetAktivnychSediemAktivne = dye::red_on_black("Pocet aktivnych sediem: ");
+        auto poznamka = dye::grey_on_black("Pri vybrati viacerych kariet naraz budu vylozene v poradi vyberu.");
+        auto potvrdenie = dye::green_on_black("Pre potvrdenie vyberu kariet stlac [ENTER].");
+        cout << "Teraz hra: " << data.activePlayerId+1 << hrac << endl;
+        cout << stojis << endl;
+        cout << cervenaSedma << endl;
+        cout << separator << endl;
+        cout << "\n" << endl;
+        cout << "Stav kariet ostatnych hracov:" << endl;
+        for (int i = 0; i < data.playersCardsCount.size(); i++) {
+            cout << "Player" << i+1 << ": " << data.playersCardsCount[i] << endl;
+        }
+        cout << "\n" << endl;
+        cout << separator << endl;
+        cout << separator << endl;
+        cout << "\n" << endl;
+        cout << "Pocet kariet v decku: " << data.deckCardsCount << endl;
+        cout << "Posledna vylozena karta: " << poslednaVylozenaKarta << endl;
+        cout << "\n" << endl;
+        cout << separator << endl;
+        cout << "\n" << endl;
+        cout << "Tvoje karty: " << endl;
+        for (int i = 0; i < data.clientPlayer.cards.size(); ++i) {
+            if (i < 10) {
+                cout << data.clientPlayer.cards[i].toString(i+1) << endl;
+            } else {
+                cout << data.clientPlayer.cards[i].toString(maleA++);
+            }
+        }
+        cout << "\n" << endl;
+        cout << "[0]\tPotiahni si kartu" << endl;
+        if (data.activeSevens < 1) {
+            cout << pocetAktivnychSediemNula << sedmyNula << endl;
+        } else {
+            cout << pocetAktivnychSediemAktivne << sedmyAktivne << endl;
+        }
+        cout << "\n" << endl;
+        cout << separator << endl;
+        cout << separator << endl;
+        cout << "\n" << endl;
+        cout << "Stlac tlacidlo zobrazene v zatvorke pre vybratie danej karty." << endl;
+        cout << "Karty na sedom pozadi vybrat nemozes." << endl;
+        cout << "Kariet mozes naraz vybrat viac pokial je to mozne." << endl;
+        cout << poznamka << endl;
+        cout << "Pre zrusenie vyberu stlac [BACKSPACE]." << endl;
+        cout << potvrdenie << endl;
+        cout << "Pre potiahnutie karty stlac [0]." << endl;
 
+        lock.unlock();
         // OUTPUT TO CONSOLE, lock mutex when reading clientData
-        //cout << data.clientPlayer.cards[0].toString(1) << endl;
-
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
