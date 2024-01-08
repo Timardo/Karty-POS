@@ -6,7 +6,7 @@
 #include <string>
 #include <boost/asio.hpp>
 
-#define MAX_PLAYERS 50
+#define MAX_PLAYERS 4
 #define DATA_DELIMITER ":"
 #define END_OF_TRANSMISSION "\n"
 #define GAME_DATA_DELIMITER ","
@@ -41,7 +41,7 @@ enum Action {
 struct Packet {
     Action action;
     string data;
-    int playerId;
+    int playerId = -1;
 
     Packet(Action actionIn, string dataIn = "-") {
         action = actionIn;
@@ -115,7 +115,7 @@ struct Card {
      * Client-side only
      * @return String representation of this card
      */
-    auto toString(int optionId);
+    auto toString(char optionId);
 
     bool canBePlacedOn(Card& bottomCard) {
         return bottomCard.color == color || bottomCard.value == value || value == QUEEN;
@@ -126,19 +126,9 @@ class Player {
 public:
     int maxCards;
     std::vector<Card> cards;
-    bool played;
 
     Player() {
         maxCards = 5;
-        played = true;
-    }
-
-    void setHasPlayed() {
-        played = true;
-    }
-
-    void setPlayersTurn() {
-        played = false;
     }
 };
 

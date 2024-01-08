@@ -17,14 +17,15 @@ public:
     tcp::socket* socket;
     std::vector<int> playersCardsCount;
     Player clientPlayer;
+    bool gameIsStarted = false;
     int deckCardsCount = 0;
     int activePlayerId = -1;
     int clientId = -1;
     int activeSevens = 0;
     bool isBeingSkipped = false;
-    bool canUseHeartSeven = false;
+    int lastPlayerToGetRidOfAllCards = -1;
     Card lastCard;
-    std::list<int> listOfSelectedOptionIndexes;
+    std::vector<int> listOfSelectedOptionIndexes;
     std::mutex mutex;
     std::queue<Packet> inboundPackets;
     std::queue<Packet> outboundPackets;
@@ -32,9 +33,33 @@ public:
     std::condition_variable conditionVariableOutboundPackets;
     bool threadsRunning = true;
 
+    void reevaluateCardsThatCanBeUsed() {
+        int lastIndex = -1;
+
+        if (!listOfSelectedOptionIndexes.empty()) {
+            lastIndex = listOfSelectedOptionIndexes.back();
+        }
+
+        Card currentBottomCard = lastIndex == -1 ? lastCard : clientPlayer.cards[lastIndex];
+
+        for (Card& card : clientPlayer.cards) {
+            if (card.isUsed) continue;
+
+            if (lastPlayerToGetRidOfAllCards != -1 && card.color == HEART && card.value == SEVEN) {
+                card.canBeUsed = true;
+                continue;
+            }
+
+            if (isBeingSkipped && card.value == ACE) {
+                card.canBeUsed = true;
+                continue;
+            }
+        }
+    }
+
     void setClientData(Packet& clientDataPacket) {
         // deckCardsCount, lastCard.color, lastCard.value, client.countCards, [client.cards[i].color, client.cards[i].value], otherPlayers.count, [otherPlayers[i].countCards]
-        // deckCardsCount, activePlayerId, thisClientId, activeSevens, beingSkipped(0/1), lastCard.color, lastCard.value, client.countCards, [client.cards[i].color, client.cards[i].value], players.count, [players[i].countCards]
+        // deckCardsCount, activePlayerId, thisClientId, activeSevens, beingSkipped(0/1), lastPlayerToGetRidOfAllCards, lastCard.color, lastCard.value, client.countCards, [client.cards[i].color, client.cards[i].value], players.count, [players[i].countCards]
         string gameDataString = clientDataPacket.data;
         std::vector<int> dataSplit;
         int delimeterIndex = 0;
@@ -54,7 +79,7 @@ public:
         clientId = dataSplit[index++];
         activeSevens = dataSplit[index++];
         isBeingSkipped = dataSplit[index++] == 1;
-        canUseHeartSeven = dataSplit[index++] == 1;
+        lastPlayerToGetRidOfAllCards = dataSplit[index++];
         lastCard = Card((Color)dataSplit[index], (Value)dataSplit[index + 1]);
         index += 2;
 
@@ -74,6 +99,8 @@ public:
         }
 
         lock.unlock();
+
+        reevaluateCardsThatCanBeUsed();
     }
 
     void processPacket(Packet& packet) {
@@ -96,15 +123,15 @@ public:
         }
         //else - sa nestane nic, pokial stlacis nieco, co nema priradenu funkcionalitu
 
-        Packet packetToSend = Packet(InboundPlayerUsedCards, std::to_string(input));
+        /*Packet packetToSend = Packet(InboundPlayerUsedCards, std::to_string(input));*/
         cout << input << endl;
 
-        std::unique_lock<std::mutex> lock(mutex);
+        /*std::unique_lock<std::mutex> lock(mutex);
 
         outboundPackets.push(packetToSend);
         conditionVariableOutboundPackets.notify_one();
 
-        lock.unlock();
+        lock.unlock();*/
     }
 
     void selectOptionWithIndex(int input) {
@@ -122,26 +149,46 @@ public:
                 confirmSelection();
                 //a premazem selected options list
                 deselectAll();
+                reevaluateCardsThatCanBeUsed();
                 return;
             }
             case 48: {
                 //stlacena 0
-
                 //TODO: posli spravu na potiahnutie kariet z decku
 
-                deselectAll();
+                Packet dataToSend = Packet(InboundPlayerTakesCards);
+                std::unique_lock<std::mutex> lock(mutex);
+
+                outboundPackets.push(dataToSend);
+                conditionVariableOutboundPackets.notify_one();
+
+                lock.unlock();
+
                 return;
             }
 
             //inak posli stlaceny key do listu vybratych optionov
             default: {
-                //pokial input este nie je selectnuty, respektive v liste selectnutych, pridam ho na koniec tohto listu
-                if (std::find(listOfSelectedOptionIndexes.begin(), listOfSelectedOptionIndexes.end(), input) == listOfSelectedOptionIndexes.end()) {
-                    listOfSelectedOptionIndexes.push_back(input);
+                int option;
+
+                if (input > '0' && input <= '9') {
+                    option = input - '1';
                 } else {
-                    //inak ak uz v liste selectnutych je, chcem ho deselectnut, teda vymazat
-                    listOfSelectedOptionIndexes.remove(input);
+                    option = input - 'a';
                 }
+
+                if (!clientPlayer.cards[option].canBeUsed) break;
+
+                clientPlayer.cards[option].isUsed = true;
+                clientPlayer.cards[option].canBeUsed = false;
+
+                //pokial input este nie je selectnuty, respektive v liste selectnutych, pridam ho na koniec tohto listu
+                if (std::find(listOfSelectedOptionIndexes.begin(), listOfSelectedOptionIndexes.end(), option) == listOfSelectedOptionIndexes.end()) {
+                    listOfSelectedOptionIndexes.push_back(option);
+                }
+
+                reevaluateCardsThatCanBeUsed();
+
                 break;
             }
         }
@@ -149,11 +196,18 @@ public:
 
     void confirmSelection() {
         //ked mam potvrdeny list optionov na selectnutie, selectnem karty im zodpovedajuce
+
+        string cardToUse = "";
+
+        for (int i = 0; i < listOfSelectedOptionIndexes.size(); i++) {
+            cardToUse += std::to_string(listOfSelectedOptionIndexes[i]) + (i == listOfSelectedOptionIndexes.size() - 1 ? "" : GAME_DATA_DELIMITER);
+        }
+
+        Packet dataToSend = Packet(InboundPlayerUsedCards, cardToUse);
         std::unique_lock<std::mutex> lock(mutex);
 
-        for (int option : listOfSelectedOptionIndexes) {
-            clientPlayer.cards[option - 1].isUsed = true;
-        }
+        outboundPackets.push(dataToSend);
+        conditionVariableOutboundPackets.notify_one();
 
         lock.unlock();
     }
@@ -163,16 +217,27 @@ public:
          * takze zatial pri deselectAll len premazem list optionov, ktore chcem vybrat
          * a na samotne selectnutie musis "potvrdit transakciu" cez ENTER
          */
-        listOfSelectedOptionIndexes.erase(listOfSelectedOptionIndexes.begin(), listOfSelectedOptionIndexes.end());
+        listOfSelectedOptionIndexes.clear();
+
+        std::unique_lock<std::mutex> lock(mutex);
+
+        for (Card& card : clientPlayer.cards) {
+            card.isUsed = false;
+            card.canBeUsed = true;
+        }
+
+        lock.unlock();
+
+        reevaluateCardsThatCanBeUsed();
     }
 };
 
-auto Card::toString(int optionId) {
-    string output = (optionId == -1 ? "" : "["+std::to_string(optionId)+"]" + "\t") + COLOR_STRING_VALUES.at(color) + " " + VALUE_STRING_VALUES.at(value);
+auto Card::toString(char optionId) {
+    string output = (optionId == -1 ? "" : "["+string(1, optionId)+"]" + "\t") + COLOR_STRING_VALUES.at(color) + " " + VALUE_STRING_VALUES.at(value);
 
     switch (color) {
         case SPADE:
-            if (!canBeUsed) {
+            if (!canBeUsed && !isUsed) {
                 return dye::grey_on_black(output);
             } else if (isUsed) {
                 return dye::green_on_aqua(output);
@@ -180,7 +245,7 @@ auto Card::toString(int optionId) {
                 return dye::green_on_black(output);
             }
         case CLUB:
-            if (!canBeUsed) {
+            if (!canBeUsed && !isUsed) {
                 return dye::grey_on_black(output);
             } else if (isUsed) {
                 return dye::yellow_on_aqua(output);
@@ -188,7 +253,7 @@ auto Card::toString(int optionId) {
                 return dye::yellow_on_black(output);
             }
         case HEART:
-            if (!canBeUsed) {
+            if (!canBeUsed && !isUsed) {
                 return dye::grey_on_black(output);
             } else if (isUsed) {
                 return dye::red_on_aqua(output);
@@ -196,7 +261,7 @@ auto Card::toString(int optionId) {
                 return dye::red_on_black(output);
             }
         case DIAMOND:
-            if (!canBeUsed) {
+            if (!canBeUsed && !isUsed) {
                 return dye::grey_on_black(output);
             } else if (isUsed) {
                 return dye::white_on_aqua(output);
@@ -245,11 +310,10 @@ void startOutboundThread(ClientData& data) {
 }
 
 void startConsoleOutputThread(ClientData& data) {
-    char maleA = 'a';
     while (data.threadsRunning) {
         std::unique_lock<std::mutex> lock(data.mutex);
         system("cls");
-        auto hrac = dye::green_on_black(data.clientId+1);
+        auto hrac = dye::green_on_black(data.activePlayerId+1);
         auto stojis = dye::grey_on_black("Aktivne ESO, stojis!");
         auto cervenaSedma = dye::grey_on_black("Teraz je mozne vyolizt Cervenu 7 pre vratenie hraca do hry!");
         auto separator = "=================================================================";
@@ -260,14 +324,14 @@ void startConsoleOutputThread(ClientData& data) {
         auto pocetAktivnychSediemAktivne = dye::red_on_black("Pocet aktivnych sediem: ");
         auto poznamka = dye::grey_on_black("Pri vybrati viacerych kariet naraz budu vylozene v poradi vyberu.");
         auto potvrdenie = dye::green_on_black("Pre potvrdenie vyberu kariet stlac [ENTER].");
-        cout << "Teraz hra: " << data.activePlayerId+1 << hrac << endl;
+        cout << "Teraz hra: " << hrac << endl;
         cout << stojis << endl;
         cout << cervenaSedma << endl;
         cout << separator << endl;
         cout << "\n" << endl;
         cout << "Stav kariet ostatnych hracov:" << endl;
         for (int i = 0; i < data.playersCardsCount.size(); i++) {
-            cout << "Player" << i+1 << ": " << data.playersCardsCount[i] << endl;
+            cout << "Player " << i+1 << ": " << data.playersCardsCount[i] << endl;
         }
         cout << "\n" << endl;
         cout << separator << endl;
@@ -281,13 +345,13 @@ void startConsoleOutputThread(ClientData& data) {
         cout << "Tvoje karty: " << endl;
         for (int i = 0; i < data.clientPlayer.cards.size(); ++i) {
             if (i < 10) {
-                cout << data.clientPlayer.cards[i].toString(i+1) << endl;
+                cout << data.clientPlayer.cards[i].toString(i+1 + '0') << endl;
             } else {
-                cout << data.clientPlayer.cards[i].toString(maleA++);
+                cout << data.clientPlayer.cards[i].toString('a' + (i - 9)) << endl;
             }
         }
         cout << "\n" << endl;
-        cout << "[0]\tPotiahni si kartu" << endl;
+        cout << ((data.gameIsStarted && data.deckCardsCount > 0) ? dye::white_on_black("[0]\tPotiahni si kartu") : dye::grey_on_black("[0]\tPotiahni si kartu")) << endl;
         if (data.activeSevens < 1) {
             cout << pocetAktivnychSediemNula << sedmyNula << endl;
         } else {

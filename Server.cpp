@@ -86,8 +86,15 @@ struct ClientConnection {
     tcp::socket* clientSocket;
     int clientId;
     GameData* gameData;
-    std::queue<Packet> outboundPackets;
+    std::queue<Packet>* outboundPackets;
     pthread_cond_t conditionVariableOutboundPackets;
+
+    void terminateConnection() {
+        pthread_cond_signal(&conditionVariableOutboundPackets);
+        clientSocket->cancel();
+        //clientSocket->shutdown(boost::asio::ip::tcp::socket::shutdown_send);
+        clientSocket->close();
+    }
 };
 
 struct GameData {
@@ -103,14 +110,25 @@ struct GameData {
     int activeSevens = 0;
     int activeAces = 0;
     int lastPlayerToGetRidOfAllCards = -1;
+    pthread_t clientConnectionThreads[MAX_PLAYERS];
+    int currentPlayers = 0;
+    boost::shared_ptr<tcp::acceptor> acceptor;
 
     void setGameStarted() {
         gameStarted = true;
         Packet packetGameStarted = Packet(OutboundGameStarted);
 
+        for (ClientConnection* clientConnection : clientConnections) {
+            pthread_mutex_lock(&mutex);
+
+            clientConnection->outboundPackets->push(packetGameStarted);
+
+            pthread_cond_signal(&clientConnection->conditionVariableOutboundPackets);
+            pthread_mutex_unlock(&mutex);
+        }
     }
 
-    bool canBePlayed(Card& card) {
+/*bool canBePlayed(Card& card) {
         Card& lastPlayedCard = deckData.getLastUsedCard();
 
         if ((activeSevens != 0) && (!(card.color == SPADE && card.value == JACK) || card.value != SEVEN)) return false;
@@ -119,54 +137,132 @@ struct GameData {
         if (card.color == HEART && card.value == SEVEN && lastPlayerToGetRidOfAllCards != -1) return true;
 
         return card.canBePlacedOn(lastPlayedCard);
-    }
+    }*/
 
-    void progressActivePlayer() {
+    void progressActivePlayer(int players) {
         activePlayerId++;
 
         if (activePlayerId >= playerData.size()) {
             lastPlayerToGetRidOfAllCards = -1;
-            activePlayerId = 0;
+            activePlayerId = activePlayerId % playerData.size();
         }
 
-        if (playerData[activePlayerId].cards.empty()) {
-            progressActivePlayer();
-        } else {
-            playerData[activePlayerId].played = false;
-
-            if (getLastPlayerWithCards() != -1) {
-                //endGame();
-            }
+        while (playerData[activePlayerId].cards.empty()) {
+            activePlayerId++;
         }
     }
 
     int getLastPlayerWithCards() {
-        int playerWithCards = -1;
+        int playersWithCards = 0;
+        int lastPlayerWithCards = -1;
 
         for (int i = 0; i < playerData.size(); i++) {
             if (!playerData[i].cards.empty()) {
-                if (playerWithCards != -1) {
-                    return -1;
-                }
-
-                playerWithCards = i;
+                playersWithCards++;
+                lastPlayerWithCards = i;
             }
         }
 
-        return playerWithCards;
+        return playersWithCards == 1 ? lastPlayerWithCards : -1;
     }
 
-    void endRound(int losingPlayer) {
+    bool isTheEndOfTheGameAndIfNotJustEndRound(int losingPlayer) {
         playerData[losingPlayer].maxCards--;
         deckData.fillDeck();
 
         for (Player& player : playerData) {
             preparePlayerForRound(player);
         }
+
+        if (deckData.getNumberOfRemainingCards() == 31) {
+            return true;
+        }
+
+        return false;
     }
 
-    void playerUsedCard(Packet& packetIn) {
-        if (!gameStarted) return;
+    bool hasLastPlayerHeartSevenAndIfSoUseItToBringBackTheLastPlayerThatGotRidOfAllCards(int currentPlayerId, int lastPlayerId) {
+        Player& lastPlayer = playerData[lastPlayerId];
+
+        for (int i = 0; i < lastPlayer.cards.size(); i++) {
+            Card& card = lastPlayer.cards[i];
+
+            if (card.color == HEART && card.value == SEVEN) {
+                lastPlayer.cards.erase(lastPlayer.cards.begin() + i);
+                deckData.takeCard(playerData[currentPlayerId], 3);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void endWholeGame() {
+        serverRunning = false;
+
+        for (ClientConnection* connection : clientConnections) {
+            connection->terminateConnection();
+        }
+
+        pthread_cond_signal(&conditionVariableInboundPackets);
+        int shutdown_status = shutdown(acceptor->native_handle(), SHUT_RDWR);
+    }
+
+    void playerUsedCards(Packet& packetIn) {
+        Player& player = playerData[packetIn.playerId];
+        string playedCards = packetIn.data;
+        int acesPlayed = 0;
+        std::vector<int> cardIndices;
+        int delimeterIndex = 0;
+        int delimeterIndex2 = (int)playedCards.find(GAME_DATA_DELIMITER);
+
+        do {
+            cardIndices.push_back(std::stoi(playedCards.substr(delimeterIndex, delimeterIndex2 - delimeterIndex)));
+            delimeterIndex = delimeterIndex2;
+            delimeterIndex2 = (int)playedCards.find(GAME_DATA_DELIMITER, ++delimeterIndex);
+        } while (delimeterIndex != 0);
+
+        for (int cardIndex : cardIndices) {
+            Card& cardToPlay = player.cards[cardIndex];
+
+            if (cardToPlay.value == SEVEN) activeSevens++;
+            if (cardToPlay.value == JACK && cardToPlay.color == SPADE) activeSevens = 0;
+
+            if (cardToPlay.value == ACE) {
+                activeAces++;
+                acesPlayed++;
+            }
+
+            deckData.playCard(cardToPlay);
+        }
+
+        sort(cardIndices.begin(), cardIndices.end(), std::greater<int>());
+        int currentIndex = 0;
+
+        for (int i = player.cards.size() - 1; i >= 0; i--) {
+            if (i == cardIndices[currentIndex++]) {
+                player.cards.erase(player.cards.begin() + i);
+            }
+        }
+
+        if (player.cards.empty()) {
+            lastPlayerToGetRidOfAllCards = packetIn.playerId;
+        }
+
+        progressActivePlayer(1 + acesPlayed);
+        int lastPlayerWithCards = getLastPlayerWithCards();
+
+        if (lastPlayerWithCards != -1) {
+            if (!hasLastPlayerHeartSevenAndIfSoUseItToBringBackTheLastPlayerThatGotRidOfAllCards(packetIn.playerId,
+                                                                                                 lastPlayerWithCards)) {
+                if (isTheEndOfTheGameAndIfNotJustEndRound(lastPlayerWithCards)) {
+                    endWholeGame();
+                    return;
+                }
+            }
+        }
+
+        /*if (!gameStarted) return;
         Player& player = playerData[packetIn.playerId];
         int cardIndex = std::stoi(packetIn.data);
 
@@ -187,12 +283,15 @@ struct GameData {
         if (cardToPlay.value == SEVEN) activeSevens++;
 
         deckData.playCard(cardToPlay);
-        player.setHasPlayed();
+        player.setHasPlayed();*/
         sendDataToAllPlayers();
     }
 
     void playerTakesCards(Packet& packetIn) {
-        if (!gameStarted) return;
+        deckData.takeCard(playerData[packetIn.playerId], activeSevens == 0 ? 1 : activeSevens * 3);
+        progressActivePlayer(1);
+
+        /*if (!gameStarted) return;
         if (packetIn.playerId != activePlayerId) return;
 
         Player& player = playerData[packetIn.playerId];
@@ -201,11 +300,11 @@ struct GameData {
         if ((activeSevens != 0) && activeSevens * 3 != cardsToTake) return;
 
         deckData.takeCard(player, cardsToTake);
-        player.setHasPlayed();
+        player.setHasPlayed();*/
         sendDataToAllPlayers();
     }
 
-    void playerEndsTurn(Packet& packetIn) {
+    /*void playerEndsTurn(Packet& packetIn) {
         if (!gameStarted) return;
         Player& player = playerData[packetIn.playerId];
 
@@ -220,7 +319,7 @@ struct GameData {
         }
 
         sendDataToAllPlayers();
-    }
+    }*/
 
     void processPacket(Packet& packet) {
         cout << "Player with id " << packet.playerId << " sent a packet with action id " << packet.action << " and data " << packet.data << endl;
@@ -230,7 +329,7 @@ struct GameData {
                 setGameStarted();
                 break;
             case InboundPlayerUsedCards:
-                playerUsedCard(packet);
+                playerUsedCards(packet);
                 break;
             case InboundPlayerTakesCards:
                 playerTakesCards(packet);
@@ -254,7 +353,6 @@ struct GameData {
     void sendDataToAllPlayers() {
         for (ClientConnection* clientConnection : clientConnections) {
             int isBeingSkipped = 0;
-            int canUseHeartSeven = 0;
             Player& thisPlayer = playerData[clientConnection->clientId];
             string currentPlayerData = std::to_string(thisPlayer.cards.size());
 
@@ -276,7 +374,7 @@ struct GameData {
                     std::to_string(clientConnection->clientId) + GAME_DATA_DELIMITER +
                     std::to_string(activeSevens) + GAME_DATA_DELIMITER +
                     std::to_string(isBeingSkipped) + GAME_DATA_DELIMITER +
-                    std::to_string(canUseHeartSeven) + GAME_DATA_DELIMITER +
+                    std::to_string(lastPlayerToGetRidOfAllCards) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.color) + GAME_DATA_DELIMITER +
                     std::to_string(lastCard.value) + GAME_DATA_DELIMITER +
                     currentPlayerData + GAME_DATA_DELIMITER +
@@ -285,12 +383,12 @@ struct GameData {
             Packet packetToSend = Packet(OutboundGameData, packetData);
             packetToSend.playerId = -1;
 
-            pthread_mutex_lock(&clientConnection->gameData->mutex);
+            pthread_mutex_lock(&mutex);
 
-            clientConnection->outboundPackets.push(packetToSend);
+            clientConnection->outboundPackets->push(packetToSend);
 
             pthread_cond_signal(&clientConnection->conditionVariableOutboundPackets);
-            pthread_mutex_unlock(&clientConnection->gameData->mutex);
+            pthread_mutex_unlock(&mutex);
         }
     }
 };
@@ -351,6 +449,7 @@ void* startInboundThread(void* args) {
     } catch (boost::system::system_error &error) {
         cout << "Client " << clientConnection->clientId << " was unable to read from socket: " << error.what() << endl;
         // TODO: handle disconnect
+        clientConnection->gameData->endWholeGame();
         return nullptr;
     }
 
@@ -364,12 +463,17 @@ void* startOutboundThread(void* args) {
         while (clientConnection->gameData->serverRunning) {
             pthread_mutex_lock(&clientConnection->gameData->mutex);
 
-            while (clientConnection->outboundPackets.empty()) {
+            while (clientConnection->outboundPackets->empty() && clientConnection->gameData->serverRunning) {
                 pthread_cond_wait(&clientConnection->conditionVariableOutboundPackets, &clientConnection->gameData->mutex);
             }
 
-            Packet packetToSend = clientConnection->outboundPackets.front();
-            clientConnection->outboundPackets.pop();
+            if (clientConnection->outboundPackets->empty() && clientConnection->gameData->serverRunning) {
+                pthread_mutex_unlock(&clientConnection->gameData->mutex);
+                return nullptr;
+            }
+
+            Packet packetToSend = clientConnection->outboundPackets->front();
+            clientConnection->outboundPackets->pop();
 
             pthread_cond_signal(&clientConnection->conditionVariableOutboundPackets);
             pthread_mutex_unlock(&clientConnection->gameData->mutex);
@@ -410,38 +514,54 @@ int main() {
     pthread_mutex_init(&gameData.mutex, nullptr);
     pthread_cond_init(&gameData.conditionVariableInboundPackets, nullptr);
 
-    pthread_t clientConnectionThreads[MAX_PLAYERS];
     pthread_t inboundPacketHandler;
     pthread_create(&inboundPacketHandler, nullptr, startInboundPacketHandler, &gameData);
 
-    int currentPlayers = 0;
     boost::asio::io_service io_service;
-    tcp::acceptor acceptor_(io_service, tcp::endpoint(tcp::v4(), 10234));
+    boost::shared_ptr<tcp::acceptor> acceptor(new tcp::acceptor(io_service, tcp::endpoint(tcp::v4(), 10234)));
 
-    while (currentPlayers < MAX_PLAYERS && !gameData.gameStarted) {
-        auto socket = new tcp::socket(io_service); // TODO: I FUCKING LOVE POINTERS, DELETE SOMEHOW ATER BECAUSE MEMORY LEAKS BAD, GARBAGE COLLECTOR BAD AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA FUCK YOU C++
-        acceptor_.accept(*socket);
-        cout << "A client with id " << currentPlayers <<  " connected to the server!" << endl;
+    gameData.acceptor = acceptor;
 
-        if (gameData.gameStarted) {
-            socket->close();
+    while (gameData.currentPlayers < MAX_PLAYERS && !gameData.gameStarted && gameData.serverRunning) {
+        tcp::socket* socket = new tcp::socket(io_service);
+
+        try {
+            acceptor->accept(*socket);
+            cout << "A client with id " << gameData.currentPlayers <<  " connected to the server!" << endl;
+        } catch (boost::system::system_error& error) {
+            cout << "(Disconnected) Error accepting client: " << error.what() << endl;
+        }
+
+        if (!gameData.serverRunning) {
+            delete socket;
             break;
         }
 
-        auto clientConnection  = new ClientConnection { // TODO: fix memory leak
+        ClientConnection* clientConnection = new ClientConnection {
                 socket,
-                currentPlayers,
-                &gameData
+                gameData.currentPlayers,
+                &gameData,
+                new std::queue<Packet>
         };
 
-        pthread_create(&clientConnectionThreads[currentPlayers], nullptr, startConnection, clientConnection);
-        currentPlayers++;
+        pthread_create(&gameData.clientConnectionThreads[gameData.currentPlayers], nullptr, startConnection, clientConnection);
+        gameData.currentPlayers++;
     }
 
-    for (int i = 0; i < currentPlayers; i++) {
-        pthread_join(clientConnectionThreads[i], nullptr);
+    for (int i = 0; i < gameData.currentPlayers; i++) {
+        pthread_join(gameData.clientConnectionThreads[i], nullptr);
     }
 
+    for (ClientConnection* connection : gameData.clientConnections) {
+        delete connection->clientSocket;
+        // NEMOZEM VYMAZAT QUEUE LEBO NEVIEM PRECO DAVA MI TO SEGMENTATION FAULT A ZABIL SOM 3 HODINY RIESENIM TOHO ZE PRECO VZDAVAM TO BUDE TU MEMORY LEAK BOHUZIAL
+        //delete connection->outboundPackets;
+        memset(connection->outboundPackets, 0, sizeof(std::queue<Packet>));
+        delete connection->outboundPackets;
+        delete connection;
+    }
+
+    pthread_join(inboundPacketHandler, nullptr);
     pthread_cond_destroy(&gameData.conditionVariableInboundPackets);
     pthread_mutex_destroy(&gameData.mutex);
 }
