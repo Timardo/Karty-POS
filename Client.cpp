@@ -23,6 +23,7 @@ public:
     int activeSevens = 0;
     bool isBeingSkipped = false;
     Card lastCard;
+    std::list<int> listOfSelectedOptionIndexes;
     std::mutex mutex;
     std::queue<Packet> inboundPackets;
     std::queue<Packet> outboundPackets;
@@ -55,6 +56,7 @@ public:
         lastCard = Card((Color)dataSplit[index], (Value)dataSplit[index + 1]);
         index += 2;
 
+
         int playerCardCount = dataSplit[index++];
         clientPlayer.cards.clear();
 
@@ -86,10 +88,11 @@ public:
 
     void handleInput(char input) {
         // HANDLE INPUT
-//
-//        if  (input >= 1 <= 9 || input >= 'a' <= 'z') {
-//            volammetoduktoramiteninputnejakospracuje;
-//        }
+
+        if  ( input == 8 || input == 13 || input >= '0' && input <= '9' || input >= 'a' && input <= 'w') {
+            selectOptionWithIndex(int(input));
+        }
+        //else - sa nestane nic, pokial stlacis nieco, co nema priradenu funkcionalitu
 
         Packet packetToSend = Packet(InboundPlayerUsedCards, std::to_string(input));
         cout << input << endl;
@@ -100,6 +103,65 @@ public:
         conditionVariableOutboundPackets.notify_one();
 
         lock.unlock();
+    }
+
+    void selectOptionWithIndex(int input) {
+        switch (input) {
+            case 8: {
+                //stlaceny BACKSPACE
+                //posli spravu na zrusenie vyberu
+                deselectAll();
+                return;
+            }
+            case 13: {
+                //stlaceny ENTER
+                //TODO: posli spravu na ukoncenie kola...nejaku...nejako
+                //potvrdim transakciu, teda nastavim vybratym kartam isUsed na true
+                confirmSelection();
+                //a premazem selected options list
+                deselectAll();
+                return;
+            }
+            case 48: {
+                //stlacena 0
+
+                //TODO: posli spravu na potiahnutie kariet z decku
+
+                deselectAll();
+                return;
+            }
+
+            //inak posli stlaceny key do listu vybratych optionov
+            default: {
+                //pokial input este nie je selectnuty, respektive v liste selectnutych, pridam ho na koniec tohto listu
+                if (std::find(listOfSelectedOptionIndexes.begin(), listOfSelectedOptionIndexes.end(), input) == listOfSelectedOptionIndexes.end()) {
+                    listOfSelectedOptionIndexes.push_back(input);
+                } else {
+                    //inak ak uz v liste selectnutych je, chcem ho deselectnut, teda vymazat
+                    listOfSelectedOptionIndexes.remove(input);
+                }
+                break;
+            }
+        }
+    }
+
+    void confirmSelection() {
+        //ked mam potvrdeny list optionov na selectnutie, selectnem karty im zodpovedajuce
+        std::unique_lock<std::mutex> lock(mutex);
+
+        for (int option : listOfSelectedOptionIndexes) {
+            clientPlayer.cards[option - 1].isUsed = true;
+        }
+
+        lock.unlock();
+    }
+
+    void deselectAll() {
+        /* TODO: nie som si isty, ako presne to bude naimplementovane na strane servera, ze kedy nastavis kartam "isUsed = false"
+         * takze zatial pri deselectAll len premazem list optionov, ktore chcem vybrat
+         * a na samotne selectnutie musis "potvrdit transakciu" cez ENTER
+         */
+        listOfSelectedOptionIndexes.erase(listOfSelectedOptionIndexes.begin(), listOfSelectedOptionIndexes.end());
     }
 };
 
