@@ -1,7 +1,6 @@
 #ifndef Shared
 #define Shared
 
-#include <boost/container/list.hpp>
 #include <map>
 #include <string>
 #include <boost/asio.hpp>
@@ -107,17 +106,13 @@ struct Card {
         value = valueIn;
     }
 
-    Card() {
-
-    }
-
     /**
      * Client-side only
      * @return String representation of this card
      */
     auto toString(char optionId);
 
-    bool canBePlacedOn(Card& bottomCard) {
+    bool canBePlacedOn(Card bottomCard) {
         return bottomCard.color == color || bottomCard.value == value || value == QUEEN;
     }
 };
